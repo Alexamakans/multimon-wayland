@@ -71,6 +71,7 @@
                   pkgs.lib.makeLibraryPath [
                     pkgs.libGL
                     pkgs.mesa
+                    pkgs.mesa_glu
                     pkgs.egl-wayland
                     pkgs.libgbm
                     pkgs.libdrm
