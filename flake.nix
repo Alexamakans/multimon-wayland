@@ -70,6 +70,7 @@
                 --set-rpath "$out/lib:${
                   pkgs.lib.makeLibraryPath [
                     pkgs.glfw-wayland
+                    pkgs.wayland
                     pkgs.libGL
                     pkgs.mesa
                     pkgs.mesa_glu
