@@ -56,7 +56,7 @@
           configurePhase = ''
             runHook preConfigure
             cmake -B build -S . \
-              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_BUILD_TYPE=RelWithDebInfo \
               -DCMAKE_INSTALL_PREFIX=$out \
               -DWLR_PROTOCOLS_DIR=${pkgs.wlr-protocols}/share/wlr-protocols
             runHook postConfigure
