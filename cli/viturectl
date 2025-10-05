@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+if [[ $# -lt 1 ]]; then
+  echo "usage: viturectl <align|push|pop|zoom-in|zoom-out|shift-left|shift-right|toggle-center-dot>" >&2
+  exit 1
+fi
+cmd="$1"
+sock="${XDG_RUNTIME_DIR:-/tmp}/viture.sock"
+if [[ ! -S "$sock" ]]; then
+  echo "socket not found at $sock" >&2
+  exit 1
+fi
+# SEQPACKET: one datagram = one command
+exec socat - "UNIX-CONNECT:$sock" <<<"$cmd"

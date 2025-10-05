@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="xdg_output_unstable_v1">
+  <interface name="zxdg_output_manager_v1" version="3">
+    <request name="get_xdg_output">
+      <arg name="id" type="new_id" interface="zxdg_output_v1"/>
+      <arg name="output" type="object" interface="wl_output"/>
+    </request>
+    <request name="destroy" type="destructor"/>
+  </interface>
+  <interface name="zxdg_output_v1" version="3">
+    <event name="logical_position"><arg name="x" type="int"/><arg name="y" type="int"/></event>
+    <event name="logical_size"><arg name="width" type="int"/><arg name="height" type="int"/></event>
+    <event name="name"><arg name="name" type="string"/></event>
+    <event name="description"><arg name="description" type="string"/></event>
+    <request name="destroy" type="destructor"/>
+    <event name="done"/>
+  </interface>
+</protocol>
+

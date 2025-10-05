@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="linux_dmabuf_unstable_v1">
+  <interface name="zwp_linux_dmabuf_v1" version="4">
+    <request name="create_params">
+      <arg name="params_id" type="new_id" interface="zwp_linux_dmabuf_params_v1"/>
+    </request>
+    <request name="destroy" type="destructor"/>
+  </interface>
+  <interface name="zwp_linux_dmabuf_params_v1" version="3">
+    <request name="destroy" type="destructor"/>
+    <request name="add">
+      <arg name="fd" type="fd"/>
+      <arg name="plane_idx" type="uint"/>
+      <arg name="offset" type="uint"/>
+      <arg name="stride" type="uint"/>
+      <arg name="modifier_hi" type="uint"/>
+      <arg name="modifier_lo" type="uint"/>
+    </request>
+    <request name="create_immed">
+      <arg name="buffer_id" type="new_id" interface="wl_buffer"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="format" type="uint"/>
+      <arg name="flags" type="uint"/>
+    </request>
+  </interface>
+</protocol>
+

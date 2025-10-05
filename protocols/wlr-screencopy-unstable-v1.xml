@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="wlr_screencopy_unstable_v1">
+  <interface name="zwlr_screencopy_manager_v1" version="3">
+    <request name="capture_output">
+      <arg name="overlay_cursor" type="int"/>
+      <arg name="frame" type="new_id" interface="zwlr_screencopy_frame_v1"/>
+      <arg name="output" type="object" interface="wl_output"/>
+    </request>
+    <request name="capture_output_region">
+      <arg name="overlay_cursor" type="int"/>
+      <arg name="frame" type="new_id" interface="zwlr_screencopy_frame_v1"/>
+      <arg name="output" type="object" interface="wl_output"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+    <request name="destroy" type="destructor"/>
+  </interface>
+
+  <interface name="zwlr_screencopy_frame_v1" version="3">
+    <event name="buffer">
+      <arg name="format" type="uint"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+      <arg name="stride" type="uint"/>
+    </event>
+    <event name="flags">
+      <arg name="flags" type="uint"/>
+    </event>
+    <event name="ready">
+      <arg name="tv_sec_hi" type="uint"/>
+      <arg name="tv_sec_lo" type="uint"/>
+      <arg name="tv_nsec" type="uint"/>
+    </event>
+    <event name="failed"/>
+    <event name="damage">
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+    <event name="linux_dmabuf">
+      <arg name="format" type="uint"/>
+      <arg name="mod_high" type="uint"/>
+      <arg name="mod_low" type="uint"/>
+    </event>
+    <request name="copy"/>
+    <request name="destroy" type="destructor"/>
+  </interface>
+</protocol>
+

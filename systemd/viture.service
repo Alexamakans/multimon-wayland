@@ -1,0 +1,12 @@
+# ~/.config/systemd/user/viture.service
+
+[Unit]
+Description=Viture XR service
+
+[Service]
+# Adjust path to your built binary
+ExecStart=%h/.local/bin/viture_ar_desktop_wayland_dmabuf
+Restart=on-failure
+Environment=XDG_RUNTIME_DIR=%t
+# Pass display env through; systemd --user usually inherits your session env.
+

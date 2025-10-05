@@ -1,0 +1,13 @@
+# ~/.config/systemd/user/viture.socket
+
+[Unit]
+Description=Viture command socket
+
+[Socket]
+# %t = XDG_RUNTIME_DIR
+ListenStream=%t/viture.sock
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target
+
