@@ -51,6 +51,8 @@
             # for referencing share/wlr-protocols
             wlroots
             wlr-protocols
+
+            systemd # provides libsystemd for socket enumeration + pkg-config file "libsystemd"
           ];
 
           configurePhase = ''
@@ -129,6 +131,8 @@
             mesa-demos
             vulkan-tools
             lddtree
+
+            systemd # provides libsystemd for socket enumeration + pkg-config file "libsystemd"
           ];
 
           shellHook = ''

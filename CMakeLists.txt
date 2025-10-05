@@ -21,6 +21,11 @@ pkg_check_modules(WP      REQUIRED wayland-protocols)
 pkg_check_modules(DRM     REQUIRED libdrm)
 pkg_check_modules(GBM     REQUIRED gbm)
 pkg_check_modules(EGL     REQUIRED egl)
+pkg_check_modules(LIBSYSTEMD     REQUIRED libsystemd)
+if (LIBSYSTEMD_FOUND)
+  add_compile_definitions(HAVE_LIBSYSTEMD=1)
+  include_directories(${LIBSYSTEMD_INCLUDE_DIRS})
+endif()
 
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 
@@ -180,6 +185,7 @@ target_link_libraries(${PROJECT_NAME}
   ${WAYLAND_LIBRARIES}
   ${DRM_LIBRARIES}
   ${GBM_LIBRARIES}
+  ${LIBSYSTEMD_LIBRARIES}
   m
   rt
 )
