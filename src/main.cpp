@@ -10,10 +10,12 @@
 #include <unistd.h>
 
 #include "platform.hpp"
-#include "capture_wlr_dmabuf.hpp"
 #include "command_server.hpp"
 #include "glasses.hpp"
 #include "viture.h"
+
+// multi-output capture (no xdg-output)
+#include "capture_multi.hpp"
 
 struct MyMonitor { int x,y,width,height,index; };
 
@@ -33,7 +35,7 @@ static void on_shift_left()       { screen_angle_offset_degrees += 5.0f; }
 static void on_shift_right()      { screen_angle_offset_degrees -= 5.0f; }
 static void on_toggle_center_dot(){ center_dot_enabled = !center_dot_enabled; }
 
-// ---- Tiny math helpers ----
+// ---- Tiny helpers ----
 static void draw_filled_center_rect(float half_w, float half_h) {
   int vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
   int W=vp[2], H=vp[3];
@@ -61,13 +63,6 @@ static void getLookVector(float &dx,float &dy,float &dz){
   dz = -std::cos(yawRad) *  std::cos(pitchRad);
 }
 
-static bool isLookingAt(float ex,float ey,float ez,float rx,float ry,float rz,float cx,float cy,float cz,float w,float h){
-  if (std::fabs(rz) < 1e-5) return false;
-  float t = (cz - ez)/rz; if (t < 0) return false;
-  float ix = ex + rx*t, iy = ey + ry*t;
-  return (ix >= cx-w/2 && ix <= cx+w/2 && iy >= cy-h/2 && iy <= cy+h/2);
-}
-
 static bool initGL() {
   glEnable(GL_TEXTURE_2D);
   glClearColor(0.f,0.f,0.f,1.f);
@@ -82,7 +77,23 @@ static void getMonitorUVs(const MyMonitor&m,int fbW,int fbH,float&u0,float&v0,fl
   u0=float(m.x)/fbW; v0=float(m.y)/fbH; u1=float(m.x+m.width)/fbW; v1=float(m.y+m.height)/fbH;
 }
 
-static void render(GLuint frameTex, int fbW, int fbH){
+// We treat each output as a separate texture; when drawing quads we bind the needed texture.
+static void drawTexturedQuad(GLuint tex, float u0,float v0,float u1,float v1,
+                             float w, float h)
+{
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glBegin(GL_QUADS);
+    glTexCoord2f(u0,v0); glVertex3f(-w/2,  h/2, 0);
+    glTexCoord2f(u1,v0); glVertex3f( w/2,  h/2, 0);
+    glTexCoord2f(u1,v1); glVertex3f( w/2, -h/2, 0);
+    glTexCoord2f(u0,v1); glVertex3f(-w/2, -h/2, 0);
+  glEnd();
+}
+
+static void render(const std::vector<CapturedOutput>& outs,
+                   const std::vector<MyMonitor>& mons,
+                   int fbW, int fbH)
+{
   glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
   glEnable(GL_DEPTH_TEST); glEnable(GL_TEXTURE_2D);
 
@@ -91,8 +102,7 @@ static void render(GLuint frameTex, int fbW, int fbH){
   glMatrixMode(GL_MODELVIEW); glLoadIdentity();
 
   float roll = get_roll(glasses);
-  float roll_perc = 0.0f; // shaping disabled for now
-
+  float roll_perc = 0.0f;
   float focused_w = 3.0f;
   float angle_deg = 20.0f;
   float n = 360.0f / angle_deg;
@@ -107,58 +117,56 @@ static void render(GLuint frameTex, int fbW, int fbH){
   gluLookAt(eyeX,eyeY,eyeZ, tx,ty,tz, 0,1,0);
   glRotatef(roll,0,0,1);
 
-  glBindTexture(GL_TEXTURE_2D, frameTex);
-
   while (focusedmonitors.size() > 7) focusedmonitors.pop_back();
 
+  // Draw ring (background monitors)
   for (int i=0; i<int(focusedmonitors.size())-1; ++i) {
-    const MyMonitor*m = focusedmonitors[i+1]; if (!m) continue;
-    float aspect = float(m->height)/m->width, focused_h = focused_w*aspect;
+    const MyMonitor* m = focusedmonitors[i+1]; if (!m) continue;
+
+    // Find which output feeds this monitor rectangle
+    // In this simplified layout every MyMonitor corresponds 1:1 to an output by index.
+    int idx = m->index;
+    if (idx < 0 || idx >= (int)outs.size()) continue;
+
+    float aspect = float(m->height)/float(m->width);
+    float focused_h = focused_w*aspect;
 
     glPushMatrix();
     glRotatef(-i*angle_deg + screen_angle_offset_degrees, 0,1,0);
     glTranslatef(0,0,base_z);
 
     float u0,v0,u1,v1; getMonitorUVs(*m, fbW, fbH, u0,v0,u1,v1);
-    glBegin(GL_QUADS);
-      glTexCoord2f(u0,v0); glVertex3f(-focused_w/2, focused_h/2, 0);
-      glTexCoord2f(u1,v0); glVertex3f( focused_w/2, focused_h/2, 0);
-      glTexCoord2f(u1,v1); glVertex3f( focused_w/2,-focused_h/2, 0);
-      glTexCoord2f(u0,v1); glVertex3f(-focused_w/2,-focused_h/2, 0);
-    glEnd();
+    drawTexturedQuad(outs[idx].texture, u0,v0,u1,v1, focused_w, focused_h);
     glPopMatrix();
   }
 
+  // Foreground monitor
   if (!focusedmonitors.empty() && focusedmonitors[0]) {
-    const MyMonitor*m = focusedmonitors[0];
-    float aspect=float(m->height)/m->width, focused_h=focused_w*aspect;
-    glPushMatrix();
-    glRotatef(-angle_deg*aspect,1,0,0);
-    glTranslatef(0,0,base_z);
-    float u0,v0,u1,v1; getMonitorUVs(*m, fbW, fbH, u0,v0,u1,v1);
-    glBegin(GL_QUADS);
-      glTexCoord2f(u0,v0); glVertex3f(-focused_w/2, focused_h/2, 0);
-      glTexCoord2f(u1,v0); glVertex3f( focused_w/2, focused_h/2, 0);
-      glTexCoord2f(u1,v1); glVertex3f( focused_w/2,-focused_h/2, 0);
-      glTexCoord2f(u0,v1); glVertex3f(-focused_w/2,-focused_h/2, 0);
-    glEnd();
-    glPopMatrix();
+    const MyMonitor* m = focusedmonitors[0];
+    int idx = m->index;
+    if (idx >= 0 && idx < (int)outs.size()) {
+      float aspect=float(m->height)/float(m->width), focused_h=focused_w*aspect;
+      glPushMatrix();
+      glRotatef(-angle_deg*aspect,1,0,0);
+      glTranslatef(0,0,base_z);
+      float u0,v0,u1,v1; getMonitorUVs(*m, fbW, fbH, u0,v0,u1,v1);
+      drawTexturedQuad(outs[idx].texture, u0,v0,u1,v1, focused_w, focused_h);
+      glPopMatrix();
+    }
   }
 
+  // Thumbnails row (one per output)
   float thumbY=1.2f, spacing=0.6f, thumbSize=0.55f;
-  for (size_t i=0;i<monitors.size();++i){
-    float x=(i-(monitors.size()-1)/2.0f)*spacing, y=thumbY, z=base_z;
-    glPushMatrix(); glTranslatef(x,y,z);
-    float u0,v0,u1,v1; getMonitorUVs(monitors[i], fbW, fbH, u0,v0,u1,v1);
-    glBegin(GL_QUADS);
-      glTexCoord2f(u0,v0); glVertex3f(-thumbSize/2, thumbSize/2, 0);
-      glTexCoord2f(u1,v0); glVertex3f( thumbSize/2, thumbSize/2, 0);
-      glTexCoord2f(u1,v1); glVertex3f( thumbSize/2,-thumbSize/2, 0);
-      glTexCoord2f(u0,v1); glVertex3f(-thumbSize/2,-thumbSize/2, 0);
-    glEnd();
-    glPopMatrix();
+  for (size_t i=0;i<mons.size();++i){
+    const MyMonitor& m = mons[i];
+    int idx = m.index;
+    if (idx < 0 || idx >= (int)outs.size()) continue;
 
-    // Gaze selection logic trimmed here for brevity — copy yours if needed.
+    float x=(i-(mons.size()-1)/2.0f)*spacing, y=thumbY, z=base_z;
+    glPushMatrix(); glTranslatef(x,y,z);
+    float u0,v0,u1,v1; getMonitorUVs(m, fbW, fbH, u0,v0,u1,v1);
+    drawTexturedQuad(outs[idx].texture, u0,v0,u1,v1, thumbSize, thumbSize);
+    glPopMatrix();
   }
 
   if (center_dot_enabled) draw_filled_center_rect(4,4);
@@ -196,15 +204,28 @@ int main(int, char**) {
     std::fprintf(stderr,"Command server init failed\n");
   }
 
-  // Wayland capture (fast path)
-  int fbW=0, fbH=0;
-  wlr_dmabuf_capture_init(nullptr, &fbW, &fbH);
+  // Discover outputs & build a synthetic big framebuffer layout (side-by-side)
+  std::vector<CapturedOutput> outs;
+  int fbW = 0, fbH = 0;
+  wlr_multi_capture_init(outs, &fbW, &fbH);
 
-  // Single “monitor” covering whole framebuffer; extend if you want panes
+  // for (auto& o : outs) { fbW += o.width; fbH = std::max(fbH, o.height); }
+
   monitors.clear();
-  monitors.push_back({0,0,fbW,fbH,0});
+  int curX = 0;
+  for (int i=0; i<(int)outs.size(); ++i) {
+    MyMonitor m{};
+    m.x = curX;
+    m.y = 0;
+    m.width  = outs[i].width;
+    m.height = outs[i].height;
+    m.index  = i;               // 1:1 mapping monitor -> CapturedOutput index
+    monitors.push_back(m);
+    curX += m.width;
+  }
+
   focusedmonitors.clear();
-  focusedmonitors.push_back(&monitors[0]);
+  if (!monitors.empty()) focusedmonitors.push_back(&monitors[0]);
 
   long highest=0; int frame=0;
   const int warm_frames=1000;
@@ -213,10 +234,12 @@ int main(int, char**) {
   while (!window_should_close()) {
     auto start = std::chrono::high_resolution_clock::now();
 
-    CaptureFrame f = wlr_dmabuf_next_frame();
+    // Update all outputs
+    wlr_multi_next_frame(outs);
 
-    cmdsrv_poll();     // process all pending control messages
-    render(f.texture, f.width, f.height);
+    // Render using our stitched layout
+    cmdsrv_poll();
+    render(outs, monitors, fbW, fbH);
 
     window_swap();
     window_poll();
@@ -229,7 +252,7 @@ int main(int, char**) {
     if (dur < target_us) usleep(target_us - dur);
   }
 
-  wlr_dmabuf_capture_shutdown();
+  wlr_multi_shutdown();
   cmdsrv_shutdown();
   shutdown_window();
   return 0;
