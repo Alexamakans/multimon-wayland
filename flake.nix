@@ -47,11 +47,18 @@
             zlib
             libffi
             stdenv.cc.cc.lib # provides libstdc++.so.6 & libgcc_s.so.1
+
+            # for referencing share/wlr-protocols
+            wlroots
+            wlr-protocols
           ];
 
           configurePhase = ''
             runHook preConfigure
-            cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$out
+            cmake -B build -S . \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=$out \
+              -DWLR_PROTOCOLS_DIR=${pkgs.wlr-protocols}/share/wlr-protocols
             runHook postConfigure
           '';
 
