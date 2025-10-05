@@ -21,9 +21,8 @@ pkg_check_modules(GLFW3 REQUIRED glfw3)
 pkg_check_modules(WAYLAND REQUIRED wayland-client)
 find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 
-# DRM/GBM for DMA-BUF allocation
+# DRM for DMA-BUF allocation
 pkg_check_modules(DRM REQUIRED libdrm)
-pkg_check_modules(GBM REQUIRED gbm)
 
 # EGL
 pkg_check_modules(EGL REQUIRED egl)
@@ -81,7 +80,6 @@ include_directories(${GEN_DIR})
 include_directories(${GLFW3_INCLUDE_DIRS})
 include_directories(${WAYLAND_INCLUDE_DIRS})
 include_directories(${DRM_INCLUDE_DIRS})
-include_directories(${GBM_INCLUDE_DIRS})
 include_directories(${EGL_INCLUDE_DIRS})
 
 # ---- VITURE SDK .so (prebuilt, same as your original layout) ----
@@ -114,7 +112,6 @@ target_link_libraries(${PROJECT_NAME}
   ${GLFW3_LIBRARIES}     # libglfw
   ${WAYLAND_LIBRARIES}   # libwayland-client
   ${DRM_LIBRARIES}       # libdrm
-  ${GBM_LIBRARIES}       # libgbm
   m
   rt
 )

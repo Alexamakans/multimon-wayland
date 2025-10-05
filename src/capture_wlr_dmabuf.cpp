@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <vector>
 #include <cstring>
+#include <cstdio>
 
 // Generated from our XMLs at build time
 #include "wlr-screencopy-unstable-v1-client-protocol.h"
@@ -37,7 +38,7 @@ struct WLCtx {
 
   // Geometry & format
   int width = 0, height = 0;
-  uint32_t fourcc = DRM_FORMAT_ARGB8888;
+  uint32_t fourcc = DRM_FORMAT_XRGB8888; // prefer XRGB on i915
   uint64_t modifier = DRM_FORMAT_MOD_INVALID;
 
   // GBM BO + dmabuf plane info and wl_buffer
@@ -69,7 +70,11 @@ static void ensure_gl_egl_image_fn() {
 }
 
 static int open_render_node() {
-  const char* cands[] = { "/dev/dri/renderD128", "/dev/dri/renderD129", "/dev/dri/renderD130" };
+  const char* cands[] = {
+    "/dev/dri/renderD128",
+    "/dev/dri/renderD129",
+    "/dev/dri/renderD130"
+  };
   for (const char* p : cands) {
     int fd = open(p, O_RDWR | O_CLOEXEC);
     if (fd >= 0) return fd;
@@ -114,7 +119,8 @@ static void frame_failed(void*, zwlr_screencopy_frame_v1*) {
 static void frame_damage(void*, zwlr_screencopy_frame_v1*, int32_t, int32_t, int32_t, int32_t) {}
 static void frame_linux_dmabuf(void*, zwlr_screencopy_frame_v1*, uint32_t format,
                                uint32_t width, uint32_t height) {
-  G.fourcc = format;
+  // Prefer what compositor tells us, but default stays XRGB8888
+  G.fourcc = format ? format : DRM_FORMAT_XRGB8888;
   G.width  = (int)width;
   G.height = (int)height;
   G.got_linux_dmabuf = true;
@@ -123,30 +129,51 @@ static const zwlr_screencopy_frame_v1_listener FRAME_LST = {
   frame_buffer, frame_flags, frame_ready, frame_failed, frame_damage, frame_linux_dmabuf
 };
 
-// --- Create client dmabuf (GBM) + WL wl_buffer via zwp_linux_dmabuf_v1 ---
+// --- Create client dmabuf (GBM) + wl_buffer via zwp_linux_dmabuf_v1 ---
+static void try_make_gbm_bo_with(uint32_t fmt, uint32_t use) {
+  G.bo = gbm_bo_create(G.gbm, G.width, G.height, fmt, use);
+  if (G.bo) return;
+
+  char fmtc[5] = {0};
+  *(uint32_t*)fmtc = fmt;
+  std::fprintf(stderr,
+    "gbm_bo_create failed (w=%d h=%d fmt=%s(0x%x) use=0x%x); trying fallback…\n",
+    G.width, G.height, fmtc, fmt, use);
+}
+
 static void create_gbm_wlbuffer() {
+  if (G.width <= 0 || G.height <= 0)
+    throw std::runtime_error("invalid size before GBM allocation");
+
   if (G.drm_fd < 0) G.drm_fd = open_render_node();
   if (!G.gbm) G.gbm = gbm_create_device(G.drm_fd);
   if (!G.gbm) throw std::runtime_error("gbm_create_device failed");
 
-  uint32_t fmt = G.fourcc ? G.fourcc : DRM_FORMAT_ARGB8888;
+  const uint32_t fmt = G.fourcc ? G.fourcc : DRM_FORMAT_XRGB8888;
 
-  // Linear buffer for broad support. For peak perf, add modifier feedback path later.
-  G.bo = gbm_bo_create(G.gbm, G.width, G.height, fmt,
-                       GBM_BO_USE_LINEAR | GBM_BO_USE_RENDERING);
-  if (!G.bo) throw std::runtime_error("gbm_bo_create failed");
+  // Allocation fallback ladder (most permissive first for i915):
+  //  1) RENDERING only
+  //  2) no flags
+  //  3) LINEAR (as last resort; often fails for large sizes on i915)
+  try_make_gbm_bo_with(fmt, GBM_BO_USE_RENDERING);
+  if (!G.bo) try_make_gbm_bo_with(fmt, 0);
+  if (!G.bo) try_make_gbm_bo_with(fmt, GBM_BO_USE_LINEAR);
+
+  if (!G.bo) throw std::runtime_error("gbm_bo_create failed (all attempts)");
 
   G.nplanes = 1;
   G.fds[0]      = gbm_bo_get_fd(G.bo);
+  if (G.fds[0] < 0) throw std::runtime_error("gbm_bo_get_fd failed");
+
   G.strides[0]  = gbm_bo_get_stride(G.bo);
   G.offsets[0]  = 0;
 
   if (!G.linux_dmabuf) throw std::runtime_error("zwp_linux_dmabuf_v1 missing");
 
   zwp_linux_dmabuf_params_v1* params = zwp_linux_dmabuf_v1_create_params(G.linux_dmabuf);
-  if (!params) throw std::runtime_error("create_params failed");
+  if (!params) throw std::runtime_error("zwp_linux_dmabuf_v1_create_params failed");
 
-  // plane-index=0, modifier split into hi/lo (we pass INVALID/0 -> linear)
+  // plane-index=0, modifier split into hi/lo (INVALID -> linear/driver default)
   zwp_linux_dmabuf_params_v1_add(params, G.fds[0], 0,
                                  G.offsets[0], G.strides[0],
                                  (uint32_t)(G.modifier >> 32),
@@ -160,44 +187,44 @@ static void create_gbm_wlbuffer() {
 // --- Create EGLImage from the dmabuf and bind to GL texture ---
 static void ensure_egl_image_and_texture() {
   if (G.tex == 0) glGenTextures(1, &G.tex);
+
   if (G.egl_img == EGL_NO_IMAGE_KHR) {
     G.egl_dpy = eglGetCurrentDisplay();
     if (G.egl_dpy == EGL_NO_DISPLAY) throw std::runtime_error("No current EGLDisplay");
     ensure_gl_egl_image_fn();
 
-    // Use EGL 1.5 core if available (attrib type = EGLAttrib*), otherwise the KHR extension (EGLint*)
-    #if defined(EGL_VERSION_1_5)
-      const EGLAttrib attrs[] = {
-        EGL_WIDTH,                      (EGLAttrib)G.width,
-        EGL_HEIGHT,                     (EGLAttrib)G.height,
-        EGL_LINUX_DMA_BUF_EXT,          (EGLAttrib)EGL_TRUE,   // not strictly required, safe
-        EGL_LINUX_DRM_FOURCC_EXT,       (EGLAttrib)G.fourcc,
-        EGL_DMA_BUF_PLANE0_FD_EXT,      (EGLAttrib)G.fds[0],
-        EGL_DMA_BUF_PLANE0_OFFSET_EXT,  (EGLAttrib)G.offsets[0],
-        EGL_DMA_BUF_PLANE0_PITCH_EXT,   (EGLAttrib)G.strides[0],
-        EGL_NONE
-      };
-      G.egl_img = eglCreateImage(
-        G.egl_dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
-        (EGLClientBuffer)nullptr, attrs);
-    #else
-      const EGLint attrs[] = {
-        EGL_WIDTH,                      (EGLint)G.width,
-        EGL_HEIGHT,                     (EGLint)G.height,
-        EGL_LINUX_DRM_FOURCC_EXT,       (EGLint)G.fourcc,
-        EGL_DMA_BUF_PLANE0_FD_EXT,      (EGLint)G.fds[0],
-        EGL_DMA_BUF_PLANE0_OFFSET_EXT,  (EGLint)G.offsets[0],
-        EGL_DMA_BUF_PLANE0_PITCH_EXT,   (EGLint)G.strides[0],
-        EGL_NONE
-      };
-      // need prototypes for KHR symbols
-      #ifndef EGL_EGLEXT_PROTOTYPES
-      #define EGL_EGLEXT_PROTOTYPES 1
-      #endif
-      G.egl_img = eglCreateImageKHR(
-        G.egl_dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
-        (EGLClientBuffer)nullptr, attrs);
-    #endif
+    // Prefer core eglCreateImage (EGL 1.5) signature with EGLAttrib*
+    // Fallback to KHR with EGLint* if needed.
+#if defined(EGL_VERSION_1_5)
+    const EGLAttrib attrs[] = {
+      EGL_WIDTH,                      (EGLAttrib)G.width,
+      EGL_HEIGHT,                     (EGLAttrib)G.height,
+      EGL_LINUX_DRM_FOURCC_EXT,       (EGLAttrib)G.fourcc,
+      EGL_DMA_BUF_PLANE0_FD_EXT,      (EGLAttrib)G.fds[0],
+      EGL_DMA_BUF_PLANE0_OFFSET_EXT,  (EGLAttrib)G.offsets[0],
+      EGL_DMA_BUF_PLANE0_PITCH_EXT,   (EGLAttrib)G.strides[0],
+      EGL_NONE
+    };
+    G.egl_img = eglCreateImage(
+      G.egl_dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
+      (EGLClientBuffer)nullptr, attrs);
+#else
+    const EGLint attrs[] = {
+      EGL_WIDTH,                      (EGLint)G.width,
+      EGL_HEIGHT,                     (EGLint)G.height,
+      EGL_LINUX_DRM_FOURCC_EXT,       (EGLint)G.fourcc,
+      EGL_DMA_BUF_PLANE0_FD_EXT,      (EGLint)G.fds[0],
+      EGL_DMA_BUF_PLANE0_OFFSET_EXT,  (EGLint)G.offsets[0],
+      EGL_DMA_BUF_PLANE0_PITCH_EXT,   (EGLint)G.strides[0],
+      EGL_NONE
+    };
+# ifndef EGL_EGLEXT_PROTOTYPES
+#  define EGL_EGLEXT_PROTOTYPES 1
+# endif
+    G.egl_img = eglCreateImageKHR(
+      G.egl_dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
+      (EGLClientBuffer)nullptr, attrs);
+#endif
 
     if (G.egl_img == EGL_NO_IMAGE_KHR)
       throw std::runtime_error("eglCreateImage(EGL_LINUX_DMA_BUF_EXT) failed");
@@ -229,6 +256,9 @@ void wlr_dmabuf_capture_init(const char* /*outputNameOptional*/, int* outW, int*
   zwlr_screencopy_frame_v1_add_listener(f, &FRAME_LST, nullptr);
 
   while (wl_display_dispatch(G.display) != -1 && !G.got_linux_dmabuf) {}
+  if (G.width <= 0 || G.height <= 0)
+    throw std::runtime_error("invalid w/h from screencopy probe");
+
   create_gbm_wlbuffer();
 
   // Copy into our dma-buf and wait for ready
@@ -262,11 +292,11 @@ CaptureFrame wlr_dmabuf_next_frame() {
 }
 
 void wlr_dmabuf_capture_shutdown() {
-  #if defined(EGL_VERSION_1_5)
-    if (G.egl_img != EGL_NO_IMAGE_KHR) { eglDestroyImage(G.egl_dpy, G.egl_img); G.egl_img = EGL_NO_IMAGE_KHR; }
-  #else
-    if (G.egl_img != EGL_NO_IMAGE_KHR) { eglDestroyImageKHR(G.egl_dpy, G.egl_img); G.egl_img = EGL_NO_IMAGE_KHR; }
-  #endif
+#if defined(EGL_VERSION_1_5)
+  if (G.egl_img != EGL_NO_IMAGE_KHR) { eglDestroyImage(G.egl_dpy, G.egl_img); G.egl_img = EGL_NO_IMAGE_KHR; }
+#else
+  if (G.egl_img != EGL_NO_IMAGE_KHR) { eglDestroyImageKHR(G.egl_dpy, G.egl_img); G.egl_img = EGL_NO_IMAGE_KHR; }
+#endif
   if (G.tex)  { glDeleteTextures(1, &G.tex); G.tex = 0; }
   if (G.wlbuf){ wl_buffer_destroy(G.wlbuf); G.wlbuf = nullptr; }
   for (int i=0;i<4;++i) if (G.fds[i]>=0) { close(G.fds[i]); G.fds[i] = -1; }
