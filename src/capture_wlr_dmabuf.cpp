@@ -107,6 +107,7 @@ static const wl_registry_listener REG_LST = { reg_global, reg_remove };
 // --- Screencopy frame callbacks ---
 static void frame_buffer(void*, zwlr_screencopy_frame_v1*,
                          uint32_t /*fmt*/, uint32_t w, uint32_t h, uint32_t /*stride*/) {
+  // Some compositors emit this before linux_dmabuf; use it as a fallback source for size.
   G.width = (int)w; G.height = (int)h;
 }
 static void frame_flags(void*, zwlr_screencopy_frame_v1*, uint32_t /*flags*/) {}
@@ -119,7 +120,7 @@ static void frame_failed(void*, zwlr_screencopy_frame_v1*) {
 static void frame_damage(void*, zwlr_screencopy_frame_v1*, int32_t, int32_t, int32_t, int32_t) {}
 static void frame_linux_dmabuf(void*, zwlr_screencopy_frame_v1*, uint32_t format,
                                uint32_t width, uint32_t height) {
-  // Prefer what compositor tells us, but default stays XRGB8888
+  // Prefer compositor format/size if provided
   G.fourcc = format ? format : DRM_FORMAT_XRGB8888;
   G.width  = (int)width;
   G.height = (int)height;
@@ -128,6 +129,7 @@ static void frame_linux_dmabuf(void*, zwlr_screencopy_frame_v1*, uint32_t format
 static const zwlr_screencopy_frame_v1_listener FRAME_LST = {
   frame_buffer, frame_flags, frame_ready, frame_failed, frame_damage, frame_linux_dmabuf
 };
+
 
 // --- Create client dmabuf (GBM) + wl_buffer via zwp_linux_dmabuf_v1 ---
 static void try_make_gbm_bo_with(uint32_t fmt, uint32_t use) {
@@ -245,23 +247,35 @@ void wlr_dmabuf_capture_init(const char* /*outputNameOptional*/, int* outW, int*
   wl_registry_add_listener(G.registry, &REG_LST, nullptr);
   wl_display_roundtrip(G.display);
 
+  if (!G.output)
+    throw std::runtime_error("no wl_output advertised by the compositor");
+
   if (!G.screencopy)
     throw std::runtime_error("zwlr_screencopy_manager_v1 missing");
   if (!G.linux_dmabuf)
     throw std::runtime_error("zwp_linux_dmabuf_v1 missing");
 
-  // Probe first frame to learn size+format via linux_dmabuf
+  // Ask for a probe frame; accept either linux_dmabuf or buffer event for size.
   zwlr_screencopy_frame_v1* f =
       zwlr_screencopy_manager_v1_capture_output(G.screencopy, 0, G.output);
   zwlr_screencopy_frame_v1_add_listener(f, &FRAME_LST, nullptr);
 
-  while (wl_display_dispatch(G.display) != -1 && !G.got_linux_dmabuf) {}
+  // Wait until we learned width/height (from *either* linux_dmabuf or buffer)
+  while (wl_display_dispatch(G.display) != -1 &&
+         !(G.got_linux_dmabuf || (G.width > 0 && G.height > 0))) {
+    // keep pumping events
+  }
+
   if (G.width <= 0 || G.height <= 0)
-    throw std::runtime_error("invalid w/h from screencopy probe");
+    throw std::runtime_error("failed to learn w/h from screencopy probe");
+
+  // If compositor didn’t emit linux_dmabuf yet, default to XRGB8888
+  if (!G.got_linux_dmabuf)
+    G.fourcc = DRM_FORMAT_XRGB8888;
 
   create_gbm_wlbuffer();
 
-  // Copy into our dma-buf and wait for ready
+  // Copy into our dmabuf and wait for READY
   zwlr_screencopy_frame_v1_copy(f, G.wlbuf);
   while (wl_display_dispatch(G.display) != -1 && !G.frame_ready) {}
   zwlr_screencopy_frame_v1_destroy(f);
