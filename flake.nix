@@ -2,7 +2,6 @@
   description = "Viture AR desktop (Wayland DMA-BUF, EGLImage fast path)";
 
   inputs = {
-    # You can switch this to follow your own nixpkgs fork/branch if you want.
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
@@ -20,29 +19,36 @@
         packages.default = pkgs.stdenv.mkDerivation {
           inherit pname;
           version = "git";
-
           src = ./.;
 
-          nativeBuildInputs =
-            [ pkgs.cmake pkgs.pkg-config pkgs.wayland-scanner pkgs.patchelf ];
+          # Let Nix do the heavy lifting in fixupPhase (patch RPATHs automatically)
+          nativeBuildInputs = with pkgs; [
+            cmake
+            pkg-config
+            wayland-scanner
+            autoPatchelfHook # ← auto-patch $out/bin/* and $out/lib/* using buildInputs
+          ];
 
+          # All runtime libs go here so fixupPhase can discover them and add to RUNPATH.
           buildInputs = with pkgs; [
             # Wayland + EGL + GL stack
             glfw-wayland
             wayland
-            wayland-protocols
+            wayland-protocols # (header-only; still fine in buildInputs)
+            libxkbcommon
             libdrm
             libgbm
-            mesa
             libGL
+            mesa
             mesa_glu
-            libxkbcommon
             egl-wayland
+
+            # Vendor SDK deps seen missing at runtime
+            zlib
             libffi
-            zlib # viture sdk .so file depends on this
+            stdenv.cc.cc.lib # provides libstdc++.so.6 & libgcc_s.so.1
           ];
 
-          # CMakeLists.txt already generates protocol headers and builds in ./build
           configurePhase = ''
             runHook preConfigure
             cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$out
@@ -58,49 +64,37 @@
           installPhase = ''
             runHook preInstall
             mkdir -p $out/bin
-
-            # Match the target name from CMakeLists.txt
             install -Dm755 build/${pname} $out/bin/${pname}
 
-            # If your repo ships the VITURE SDK .so, install it and set RPATH
+            # If the repo ships the vendor SDK .so, install it so it's in our closure.
             if [ -f libs/libviture_one_sdk.so ]; then
               mkdir -p $out/lib
               install -Dm755 libs/libviture_one_sdk.so $out/lib/libviture_one_sdk.so
-              ${pkgs.patchelf}/bin/patchelf \
-                --set-rpath "$out/lib:${
-                  pkgs.lib.makeLibraryPath [
-                    pkgs.glfw-wayland
-                    pkgs.wayland
-                    pkgs.libGL
-                    pkgs.mesa
-                    pkgs.mesa_glu
-                    pkgs.egl-wayland
-                    pkgs.libgbm
-                    pkgs.libdrm
-                    pkgs.zlib
-                  ]
-                }" \
-                $out/bin/${pname}
             fi
-
             runHook postInstall
+          '';
+
+          # Manual bit: ensure the main binary's RUNPATH includes $out/lib so it can find the SDK.
+          # Let autoPatchelfHook handle the rest of the dependency RPATHs from buildInputs.
+          postFixup = ''
+            if [ -x "$out/bin/${pname}" ]; then
+              ${pkgs.patchelf}/bin/patchelf --add-rpath "$out/lib" "$out/bin/${pname}" || true
+            fi
           '';
 
           meta = {
             description =
               "Wayland DMA-BUF capture → EGLImage → OpenGL texture (zero copy)";
-            mainProgram = pname; # enables `nix run` without specifying program
+            mainProgram = pname;
             platforms = pkgs.lib.platforms.linux;
           };
         };
 
-        # `nix run .` will just start the app
         apps.default = {
           type = "app";
           program = "${self.packages.${system}.default}/bin/${pname}";
         };
 
-        # Handy dev shell: headers, tools, and GPU/Wayland stack available
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             # toolchain
@@ -114,21 +108,22 @@
             wayland
             wayland-protocols
             wayland-scanner
+            libxkbcommon
             libdrm
             libgbm
-            mesa
             libGL
+            mesa
             mesa_glu
-            libxkbcommon
             egl-wayland
             libffi
+            zlib
 
-            # useful diagnostics
+            # diagnostics
             mesa-demos
             vulkan-tools
+            lddtree
           ];
 
-          # Helpful when using render nodes; add yourself to `video` group system-wide if needed
           shellHook = ''
             echo "Dev shell ready. Build with:  cmake -B build -S . && cmake --build build -j"
             echo "Run with:           ./build/${pname}"
