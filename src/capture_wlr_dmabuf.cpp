@@ -1,3 +1,4 @@
+// src/capture_wlr_dmabuf.cpp
 #include "capture_wlr_dmabuf.hpp"
 
 #include <wayland-client.h>
@@ -17,7 +18,6 @@
 // Generated from our XMLs at build time
 #include "wlr-screencopy-unstable-v1-client-protocol.h"
 #include "linux-dmabuf-unstable-v1-client-protocol.h"
-#include "xdg-output-unstable-v1-client-protocol.h"
 
 // We need the OES function to bind an EGLImage to a GL texture
 static PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES_ = nullptr;
@@ -56,6 +56,7 @@ struct WLCtx {
 
   // State
   bool got_linux_dmabuf = false;
+  bool got_buffer_dims  = false;   // from frame_buffer event
   bool frame_ready = false;
 } static G;
 
@@ -82,12 +83,6 @@ static int open_render_node() {
   throw std::runtime_error("Failed to open /dev/dri/renderD* (render node)");
 }
 
-static EGLDisplay current_egl_display_or_throw() {
-  EGLDisplay d = eglGetCurrentDisplay();
-  if (d == EGL_NO_DISPLAY) throw std::runtime_error("No current EGLDisplay (GLFW must use EGL)");
-  return d;
-}
-
 // --- Registry ---
 static void reg_global(void*, wl_registry* reg, uint32_t name, const char* iface, uint32_t ver) {
   (void)ver;
@@ -108,7 +103,7 @@ static const wl_registry_listener REG_LST = { reg_global, reg_remove };
 static void frame_buffer(void*, zwlr_screencopy_frame_v1*,
                          uint32_t /*fmt*/, uint32_t w, uint32_t h, uint32_t /*stride*/) {
   // Some compositors emit this before linux_dmabuf; use it as a fallback source for size.
-  G.width = (int)w; G.height = (int)h;
+  G.width = (int)w; G.height = (int)h; G.got_buffer_dims = (w > 0 && h > 0);
 }
 static void frame_flags(void*, zwlr_screencopy_frame_v1*, uint32_t /*flags*/) {}
 static void frame_ready(void*, zwlr_screencopy_frame_v1*, uint32_t, uint32_t, uint32_t) {
@@ -129,7 +124,6 @@ static void frame_linux_dmabuf(void*, zwlr_screencopy_frame_v1*, uint32_t format
 static const zwlr_screencopy_frame_v1_listener FRAME_LST = {
   frame_buffer, frame_flags, frame_ready, frame_failed, frame_damage, frame_linux_dmabuf
 };
-
 
 // --- Create client dmabuf (GBM) + wl_buffer via zwp_linux_dmabuf_v1 ---
 static void try_make_gbm_bo_with(uint32_t fmt, uint32_t use) {
@@ -153,14 +147,13 @@ static void create_gbm_wlbuffer() {
 
   const uint32_t fmt = G.fourcc ? G.fourcc : DRM_FORMAT_XRGB8888;
 
-  // Allocation fallback ladder (most permissive first for i915):
+  // Allocation fallback ladder (works well on i915):
   //  1) RENDERING only
   //  2) no flags
-  //  3) LINEAR (as last resort; often fails for large sizes on i915)
+  //  3) LINEAR (last resort; can fail for big BOs)
   try_make_gbm_bo_with(fmt, GBM_BO_USE_RENDERING);
   if (!G.bo) try_make_gbm_bo_with(fmt, 0);
   if (!G.bo) try_make_gbm_bo_with(fmt, GBM_BO_USE_LINEAR);
-
   if (!G.bo) throw std::runtime_error("gbm_bo_create failed (all attempts)");
 
   G.nplanes = 1;
@@ -195,8 +188,6 @@ static void ensure_egl_image_and_texture() {
     if (G.egl_dpy == EGL_NO_DISPLAY) throw std::runtime_error("No current EGLDisplay");
     ensure_gl_egl_image_fn();
 
-    // Prefer core eglCreateImage (EGL 1.5) signature with EGLAttrib*
-    // Fallback to KHR with EGLint* if needed.
 #if defined(EGL_VERSION_1_5)
     const EGLAttrib attrs[] = {
       EGL_WIDTH,                      (EGLAttrib)G.width,
@@ -245,37 +236,55 @@ void wlr_dmabuf_capture_init(const char* /*outputNameOptional*/, int* outW, int*
 
   G.registry = wl_display_get_registry(G.display);
   wl_registry_add_listener(G.registry, &REG_LST, nullptr);
-  wl_display_roundtrip(G.display);
+  wl_display_roundtrip(G.display); // enumerate globals
 
   if (!G.output)
     throw std::runtime_error("no wl_output advertised by the compositor");
-
   if (!G.screencopy)
     throw std::runtime_error("zwlr_screencopy_manager_v1 missing");
   if (!G.linux_dmabuf)
     throw std::runtime_error("zwp_linux_dmabuf_v1 missing");
 
-  // Ask for a probe frame; accept either linux_dmabuf or buffer event for size.
-  zwlr_screencopy_frame_v1* f =
-      zwlr_screencopy_manager_v1_capture_output(G.screencopy, 0, G.output);
-  zwlr_screencopy_frame_v1_add_listener(f, &FRAME_LST, nullptr);
+  // Robust probe: try several short probe frames until we get w/h
+  const int MAX_ATTEMPTS = 8;
+  const int MAX_PUMPS    = 512;
 
-  // Wait until we learned width/height (from *either* linux_dmabuf or buffer)
-  while (wl_display_dispatch(G.display) != -1 &&
-         !(G.got_linux_dmabuf || (G.width > 0 && G.height > 0))) {
-    // keep pumping events
+  for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
+    G.got_linux_dmabuf = false;
+    G.got_buffer_dims  = false;
+
+    zwlr_screencopy_frame_v1* f =
+        zwlr_screencopy_manager_v1_capture_output(G.screencopy, 0, G.output);
+    zwlr_screencopy_frame_v1_add_listener(f, &FRAME_LST, nullptr);
+
+    int pumps = 0;
+    while (wl_display_dispatch(G.display) != -1 &&
+           !(G.got_linux_dmabuf || G.got_buffer_dims)) {
+      if (++pumps > MAX_PUMPS) break;
+    }
+
+    if (G.got_linux_dmabuf || G.got_buffer_dims) {
+      zwlr_screencopy_frame_v1_destroy(f);
+      break;
+    }
+
+    // Give compositor a chance, destroy this probe and retry.
+    zwlr_screencopy_frame_v1_destroy(f);
   }
 
   if (G.width <= 0 || G.height <= 0)
     throw std::runtime_error("failed to learn w/h from screencopy probe");
 
-  // If compositor didn’t emit linux_dmabuf yet, default to XRGB8888
+  // If compositor didn’t emit linux_dmabuf, choose a sane default format
   if (!G.got_linux_dmabuf)
     G.fourcc = DRM_FORMAT_XRGB8888;
 
   create_gbm_wlbuffer();
 
   // Copy into our dmabuf and wait for READY
+  zwlr_screencopy_frame_v1* f =
+      zwlr_screencopy_manager_v1_capture_output(G.screencopy, 0, G.output);
+  zwlr_screencopy_frame_v1_add_listener(f, &FRAME_LST, nullptr);
   zwlr_screencopy_frame_v1_copy(f, G.wlbuf);
   while (wl_display_dispatch(G.display) != -1 && !G.frame_ready) {}
   zwlr_screencopy_frame_v1_destroy(f);

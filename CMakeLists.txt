@@ -63,17 +63,12 @@ WL_PRIVATE_CODE (wlr-screencopy-unstable-v1-protocol.c       wlr-screencopy-unst
 WL_CLIENT_HEADER(linux-dmabuf-unstable-v1-client-protocol.h  linux-dmabuf-unstable-v1.xml)
 WL_PRIVATE_CODE (linux-dmabuf-unstable-v1-protocol.c         linux-dmabuf-unstable-v1.xml)
 
-WL_CLIENT_HEADER(xdg-output-unstable-v1-client-protocol.h     xdg-output-unstable-v1.xml)
-WL_PRIVATE_CODE (xdg-output-unstable-v1-protocol.c            xdg-output-unstable-v1.xml)
-
 add_custom_target(protocol_headers ALL
   DEPENDS
     ${GEN_DIR}/wlr-screencopy-unstable-v1-client-protocol.h
     ${GEN_DIR}/linux-dmabuf-unstable-v1-client-protocol.h
-    ${GEN_DIR}/xdg-output-unstable-v1-client-protocol.h
     ${GEN_DIR}/wlr-screencopy-unstable-v1-protocol.c
     ${GEN_DIR}/linux-dmabuf-unstable-v1-protocol.c
-    ${GEN_DIR}/xdg-output-unstable-v1-protocol.c
 )
 
 include_directories(${GEN_DIR})
@@ -99,7 +94,6 @@ file(GLOB SRC
 list(APPEND SRC
   ${GEN_DIR}/wlr-screencopy-unstable-v1-protocol.c
   ${GEN_DIR}/linux-dmabuf-unstable-v1-protocol.c
-  ${GEN_DIR}/xdg-output-unstable-v1-protocol.c
 )
 
 add_executable(${PROJECT_NAME} ${SRC})
