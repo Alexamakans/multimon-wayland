@@ -69,6 +69,7 @@
               ${pkgs.patchelf}/bin/patchelf \
                 --set-rpath "$out/lib:${
                   pkgs.lib.makeLibraryPath [
+                    pkgs.glfw-wayland
                     pkgs.libGL
                     pkgs.mesa
                     pkgs.mesa_glu
