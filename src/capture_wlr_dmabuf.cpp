@@ -161,23 +161,46 @@ static void create_gbm_wlbuffer() {
 static void ensure_egl_image_and_texture() {
   if (G.tex == 0) glGenTextures(1, &G.tex);
   if (G.egl_img == EGL_NO_IMAGE_KHR) {
-    G.egl_dpy = current_egl_display_or_throw();
+    G.egl_dpy = eglGetCurrentDisplay();
+    if (G.egl_dpy == EGL_NO_DISPLAY) throw std::runtime_error("No current EGLDisplay");
     ensure_gl_egl_image_fn();
 
-    const EGLint attrs[] = {
-      EGL_WIDTH,  G.width,
-      EGL_HEIGHT, G.height,
-      EGL_LINUX_DRM_FOURCC_EXT, (EGLint)G.fourcc,
-      EGL_DMA_BUF_PLANE0_FD_EXT,     G.fds[0],
-      EGL_DMA_BUF_PLANE0_OFFSET_EXT, (EGLint)G.offsets[0],
-      EGL_DMA_BUF_PLANE0_PITCH_EXT,  (EGLint)G.strides[0],
-      EGL_NONE
-    };
-    G.egl_img = eglCreateImageKHR(G.egl_dpy, EGL_NO_CONTEXT,
-                                  EGL_LINUX_DMA_BUF_EXT,
-                                  (EGLClientBuffer)nullptr, attrs);
+    // Use EGL 1.5 core if available (attrib type = EGLAttrib*), otherwise the KHR extension (EGLint*)
+    #if defined(EGL_VERSION_1_5)
+      const EGLAttrib attrs[] = {
+        EGL_WIDTH,                      (EGLAttrib)G.width,
+        EGL_HEIGHT,                     (EGLAttrib)G.height,
+        EGL_LINUX_DMA_BUF_EXT,          (EGLAttrib)EGL_TRUE,   // not strictly required, safe
+        EGL_LINUX_DRM_FOURCC_EXT,       (EGLAttrib)G.fourcc,
+        EGL_DMA_BUF_PLANE0_FD_EXT,      (EGLAttrib)G.fds[0],
+        EGL_DMA_BUF_PLANE0_OFFSET_EXT,  (EGLAttrib)G.offsets[0],
+        EGL_DMA_BUF_PLANE0_PITCH_EXT,   (EGLAttrib)G.strides[0],
+        EGL_NONE
+      };
+      G.egl_img = eglCreateImage(
+        G.egl_dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
+        (EGLClientBuffer)nullptr, attrs);
+    #else
+      const EGLint attrs[] = {
+        EGL_WIDTH,                      (EGLint)G.width,
+        EGL_HEIGHT,                     (EGLint)G.height,
+        EGL_LINUX_DRM_FOURCC_EXT,       (EGLint)G.fourcc,
+        EGL_DMA_BUF_PLANE0_FD_EXT,      (EGLint)G.fds[0],
+        EGL_DMA_BUF_PLANE0_OFFSET_EXT,  (EGLint)G.offsets[0],
+        EGL_DMA_BUF_PLANE0_PITCH_EXT,   (EGLint)G.strides[0],
+        EGL_NONE
+      };
+      // need prototypes for KHR symbols
+      #ifndef EGL_EGLEXT_PROTOTYPES
+      #define EGL_EGLEXT_PROTOTYPES 1
+      #endif
+      G.egl_img = eglCreateImageKHR(
+        G.egl_dpy, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT,
+        (EGLClientBuffer)nullptr, attrs);
+    #endif
+
     if (G.egl_img == EGL_NO_IMAGE_KHR)
-      throw std::runtime_error("eglCreateImageKHR(LINUX_DMA_BUF) failed");
+      throw std::runtime_error("eglCreateImage(EGL_LINUX_DMA_BUF_EXT) failed");
   }
 
   glBindTexture(GL_TEXTURE_2D, G.tex);
@@ -239,7 +262,11 @@ CaptureFrame wlr_dmabuf_next_frame() {
 }
 
 void wlr_dmabuf_capture_shutdown() {
-  if (G.egl_img != EGL_NO_IMAGE_KHR) { eglDestroyImageKHR(G.egl_dpy, G.egl_img); G.egl_img = EGL_NO_IMAGE_KHR; }
+  #if defined(EGL_VERSION_1_5)
+    if (G.egl_img != EGL_NO_IMAGE_KHR) { eglDestroyImage(G.egl_dpy, G.egl_img); G.egl_img = EGL_NO_IMAGE_KHR; }
+  #else
+    if (G.egl_img != EGL_NO_IMAGE_KHR) { eglDestroyImageKHR(G.egl_dpy, G.egl_img); G.egl_img = EGL_NO_IMAGE_KHR; }
+  #endif
   if (G.tex)  { glDeleteTextures(1, &G.tex); G.tex = 0; }
   if (G.wlbuf){ wl_buffer_destroy(G.wlbuf); G.wlbuf = nullptr; }
   for (int i=0;i<4;++i) if (G.fds[i]>=0) { close(G.fds[i]); G.fds[i] = -1; }

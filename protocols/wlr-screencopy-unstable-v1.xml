@@ -45,7 +45,9 @@
       <arg name="mod_high" type="uint"/>
       <arg name="mod_low" type="uint"/>
     </event>
-    <request name="copy"/>
+    <request name="copy">
+      <arg name="buffer" type="object" interface="wl_buffer" />
+    </request>
     <request name="destroy" type="destructor"/>
   </interface>
 </protocol>

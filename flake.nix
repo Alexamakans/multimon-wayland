@@ -32,12 +32,14 @@
             wayland
             wayland-protocols
             libdrm
-            gbm
+            libgbm
             mesa
             libGL
             mesa_glu
             libxkbcommon
             egl-wayland
+            libffi
+            zlib # viture sdk .so file depends on this
           ];
 
           # CMakeLists.txt already generates protocol headers and builds in ./build
@@ -70,8 +72,9 @@
                     pkgs.libGL
                     pkgs.mesa
                     pkgs.egl-wayland
-                    pkgs.gbm
+                    pkgs.libgbm
                     pkgs.libdrm
+                    pkgs.zlib
                   ]
                 }" \
                 $out/bin/${pname}
@@ -109,16 +112,16 @@
             wayland-protocols
             wayland-scanner
             libdrm
-            gbm
+            libgbm
             mesa
             libGL
             mesa_glu
             libxkbcommon
             egl-wayland
+            libffi
 
             # useful diagnostics
-            eglinfo
-            glxinfo
+            mesa-demos
             vulkan-tools
           ];
 

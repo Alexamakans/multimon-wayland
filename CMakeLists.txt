@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 project(viture_ar_desktop_wayland_dmabuf VERSION 1.0)
 
+add_compile_definitions(EGL_EGLEXT_PROTOTYPES GL_GLEXT_PROTOTYPES)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
@@ -10,6 +12,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 find_package(OpenGL REQUIRED)
 find_package(PkgConfig REQUIRED)
+find_package(ZLIB REQUIRED)
 
 # GLFW (Wayland-enabled build)
 pkg_check_modules(GLFW3 REQUIRED glfw3)
@@ -22,15 +25,16 @@ find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
 pkg_check_modules(DRM REQUIRED libdrm)
 pkg_check_modules(GBM REQUIRED gbm)
 
-# EGL (we import dmabufs via EGLImage)
+# EGL
 pkg_check_modules(EGL REQUIRED egl)
 
-# ---- Generate protocol headers from XMLs we ship in-tree ----
+# ---- Generate protocol headers + C stubs ----
 set(PROTO_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocols)
 set(GEN_DIR   ${CMAKE_CURRENT_BINARY_DIR}/protocols-generated)
 file(MAKE_DIRECTORY ${GEN_DIR})
 
-macro(WL_CLIENT_HEADER out name xml)
+# Generate client-header
+macro(WL_CLIENT_HEADER out xml)
   add_custom_command(
     OUTPUT ${GEN_DIR}/${out}
     COMMAND ${WAYLAND_SCANNER} client-header
@@ -41,18 +45,39 @@ macro(WL_CLIENT_HEADER out name xml)
   )
 endmacro()
 
+# Generate private-code (C file providing the interface objects)
+macro(WL_PRIVATE_CODE outc xml)
+  add_custom_command(
+    OUTPUT ${GEN_DIR}/${outc}
+    COMMAND ${WAYLAND_SCANNER} private-code
+            ${PROTO_DIR}/${xml}
+            ${GEN_DIR}/${outc}
+    DEPENDS ${PROTO_DIR}/${xml}
+    VERBATIM
+  )
+endmacro()
+
 WL_CLIENT_HEADER(wlr-screencopy-unstable-v1-client-protocol.h wlr-screencopy-unstable-v1.xml)
+WL_PRIVATE_CODE (wlr-screencopy-unstable-v1-protocol.c       wlr-screencopy-unstable-v1.xml)
+
 WL_CLIENT_HEADER(linux-dmabuf-unstable-v1-client-protocol.h  linux-dmabuf-unstable-v1.xml)
+WL_PRIVATE_CODE (linux-dmabuf-unstable-v1-protocol.c         linux-dmabuf-unstable-v1.xml)
+
 WL_CLIENT_HEADER(xdg-output-unstable-v1-client-protocol.h     xdg-output-unstable-v1.xml)
+WL_PRIVATE_CODE (xdg-output-unstable-v1-protocol.c            xdg-output-unstable-v1.xml)
 
 add_custom_target(protocol_headers ALL
   DEPENDS
     ${GEN_DIR}/wlr-screencopy-unstable-v1-client-protocol.h
     ${GEN_DIR}/linux-dmabuf-unstable-v1-client-protocol.h
     ${GEN_DIR}/xdg-output-unstable-v1-client-protocol.h
+    ${GEN_DIR}/wlr-screencopy-unstable-v1-protocol.c
+    ${GEN_DIR}/linux-dmabuf-unstable-v1-protocol.c
+    ${GEN_DIR}/xdg-output-unstable-v1-protocol.c
 )
 
 include_directories(${GEN_DIR})
+
 include_directories(${GLFW3_INCLUDE_DIRS})
 include_directories(${WAYLAND_INCLUDE_DIRS})
 include_directories(${DRM_INCLUDE_DIRS})
@@ -71,14 +96,21 @@ file(GLOB SRC
   src/*.c
 )
 
+list(APPEND SRC
+  ${GEN_DIR}/wlr-screencopy-unstable-v1-protocol.c
+  ${GEN_DIR}/linux-dmabuf-unstable-v1-protocol.c
+  ${GEN_DIR}/xdg-output-unstable-v1-protocol.c
+)
+
 add_executable(${PROJECT_NAME} ${SRC})
 add_dependencies(${PROJECT_NAME} protocol_headers)
 
 target_link_libraries(${PROJECT_NAME}
   viture_sdk
-  ${OPENGL_gl_LIBRARY}   # libGL
+  OpenGL::GL
   GLU                    # if you still use gluPerspective
-  ${EGL_LIBRARIES}       # libEGL (for eglCreateImageKHR + eglGetProcAddress)
+  ZLIB::ZLIB
+  ${EGL_LIBRARIES}       # libEGL (for eglCreateImage + eglGetProcAddress)
   ${GLFW3_LIBRARIES}     # libglfw
   ${WAYLAND_LIBRARIES}   # libwayland-client
   ${DRM_LIBRARIES}       # libdrm
