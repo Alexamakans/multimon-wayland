@@ -130,13 +130,14 @@
             # diagnostics
             mesa-demos
             vulkan-tools
-            lddtree
 
             systemd # provides libsystemd for socket enumeration + pkg-config file "libsystemd"
+
+            clang-tools
           ];
 
           shellHook = ''
-            echo "Dev shell ready. Build with:  cmake -B build -S . && cmake --build build -j"
+            echo "Dev shell ready. Build with:  cmake -DWLR_PROTOCOLS_DIR=/nix/store/1lm21z1z9cfil1qls8c4d5rc4l9mvqji-wlr-protocols-unstable-2022-09-05/share/wlr-protocols -B build -S . && cmake --build build -j"
             echo "Run with:           ./build/${pname}"
           '';
         };
