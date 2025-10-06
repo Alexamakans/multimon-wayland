@@ -55,11 +55,23 @@
             systemd # provides libsystemd for socket enumeration + pkg-config file "libsystemd"
           ];
 
+          # configurePhase = ''
+          #    runHook preConfigure
+          #    cmake -B build -S . \
+          #      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          #      -DCMAKE_INSTALL_PREFIX=$out \
+          #      -DWLR_PROTOCOLS_DIR=${pkgs.wlr-protocols}/share/wlr-protocols
+          #    runHook postConfigure
+          #  '';
+
           configurePhase = ''
             runHook preConfigure
             cmake -B build -S . \
-              -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+              -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=$out \
+              -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+              -DCMAKE_C_FLAGS_RELEASE="-O3 -DNDEBUG -march=native -mtune=native -fomit-frame-pointer -fno-plt -flto" \
+              -DCMAKE_CXX_FLAGS_RELEASE="-O3 -DNDEBUG -march=native -mtune=native -fomit-frame-pointer -fno-plt -flto -ffast-math -fno-math-errno -fno-trapping-math -ffp-contract=fast" \
               -DWLR_PROTOCOLS_DIR=${pkgs.wlr-protocols}/share/wlr-protocols
             runHook postConfigure
           '';

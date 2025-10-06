@@ -113,10 +113,14 @@ static bool initGL() {
 
 static void getMonitorUVs(const MyMonitor &m, int fbW, int fbH, float &u0,
                           float &v0, float &u1, float &v1) {
-  u0 = float(m.x) / fbW;
-  v0 = float(m.y) / fbH;
-  u1 = float(m.x + m.width) / fbW;
-  v1 = float(m.y + m.height) / fbH;
+  // u0 = float(m.x) / fbW;
+  // v0 = float(m.y) / fbH;
+  // u1 = float(m.x + m.width) / fbW;
+  // v1 = float(m.y + m.height) / fbH;
+  u0 = 0.0f;
+  v0 = 0.0f;
+  u1 = 1.0f;
+  v1 = 1.0f;
 }
 
 // We treat each output as a separate texture; when drawing quads we bind the
@@ -323,6 +327,7 @@ int main(int, char **) {
   std::vector<CapturedOutput> outs;
   int fbW = 0, fbH = 0;
   wlr_multi_capture_init(outs, &fbW, &fbH);
+  std::fprintf(stdout, "[debug] fbW=%d, fbH=%d\n", fbW, fbH);
 
   // for (auto& o : outs) { fbW += o.width; fbH = std::max(fbH, o.height); }
   std::fprintf(stdout, "[debug] Found %zu monitors\n", outs.size());
