@@ -1,0 +1,1 @@
+- [] Check if changing distance rather than FoV is better? (Maybe allow for changing both)
