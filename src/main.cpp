@@ -24,6 +24,9 @@ struct MyMonitor {
 static float screen_angle_offset_degrees = 0.0f;
 static bool center_dot_enabled = true;
 
+static float eye_zoom_mult = 1.0f;
+static float angle_deg = 40.0f;
+
 static std::vector<MyMonitor> monitors;
 static std::vector<MyMonitor *> focusedmonitors;
 
@@ -49,10 +52,14 @@ static void on_pop() {
   if (!focusedmonitors.empty())
     focusedmonitors.pop_back();
 }
-static void on_zoom_in() { glasses.fov *= 0.99; }
-static void on_zoom_out() { glasses.fov *= 1.01; }
-static void on_shift_left() { screen_angle_offset_degrees += 5.0f; }
-static void on_shift_right() { screen_angle_offset_degrees -= 5.0f; }
+// static void on_zoom_in() { glasses.fov *= 0.99; }
+// static void on_zoom_out() { glasses.fov *= 1.01; }
+static void on_zoom_in() { eye_zoom_mult += 0.05; }
+static void on_zoom_out() { eye_zoom_mult -= 0.05; }
+static void on_shift_left() { screen_angle_offset_degrees += angle_deg / 2.0f; }
+static void on_shift_right() {
+  screen_angle_offset_degrees -= angle_deg / 2.0f;
+}
 static void on_toggle_center_dot() { center_dot_enabled = !center_dot_enabled; }
 
 // ---- Tiny helpers ----
@@ -187,15 +194,14 @@ static void render(const std::vector<CapturedOutput> &outs,
   float roll = get_roll(glasses);
   float roll_perc = 0.0f;
   float focused_w = 3.0f;
-  float angle_deg = 20.0f;
   float n = 360.0f / angle_deg;
   float pi_div_n = 3.14159265359f / n;
   float r = (focused_w / 2.0f) * (std::cos(pi_div_n) / std::sin(pi_div_n));
-  float base_z = -r + roll_perc;
+  float base_z = (-r + roll_perc);
 
   float rayX, rayY, rayZ;
   getLookVector(rayX, rayY, rayZ);
-  float flat_z = r - focused_w * 1.05f;
+  float flat_z = (r - focused_w * 1.05f) * eye_zoom_mult;
   float eyeX = rayX * roll_perc, eyeY = rayY * roll_perc,
         eyeZ = rayZ * roll_perc - flat_z;
   float tx = eyeX + rayX, ty = eyeY + rayY, tz = eyeZ + rayZ;
