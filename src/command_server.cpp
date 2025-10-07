@@ -23,6 +23,8 @@ static int g_listen_fd = -1;
 void (*cmd_on_align)()             = nullptr;
 void (*cmd_on_push)()              = nullptr;
 void (*cmd_on_pop)()               = nullptr;
+void (*cmd_on_zoom_in_fov)()           = nullptr;
+void (*cmd_on_zoom_out_fov)()          = nullptr;
 void (*cmd_on_zoom_in)()           = nullptr;
 void (*cmd_on_zoom_out)()          = nullptr;
 void (*cmd_on_shift_left)()        = nullptr;
@@ -196,6 +198,8 @@ static void handle_cmd(const std::string& cmd) {
   if (cmd == "align")                 { if (cmd_on_align)             cmd_on_align(); }
   else if (cmd == "push")             { if (cmd_on_push)              cmd_on_push(); }
   else if (cmd == "pop")              { if (cmd_on_pop)               cmd_on_pop(); }
+  else if (cmd == "zoom-in-fov")      { if (cmd_on_zoom_in_fov)       cmd_on_zoom_in_fov(); }
+  else if (cmd == "zoom-out-fov")     { if (cmd_on_zoom_out_fov)      cmd_on_zoom_out_fov(); }
   else if (cmd == "zoom-in")          { if (cmd_on_zoom_in)           cmd_on_zoom_in(); }
   else if (cmd == "zoom-out")         { if (cmd_on_zoom_out)          cmd_on_zoom_out(); }
   else if (cmd == "shift-left")       { if (cmd_on_shift_left)        cmd_on_shift_left(); }

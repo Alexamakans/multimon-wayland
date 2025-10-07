@@ -12,6 +12,8 @@ void cmdsrv_shutdown();
 extern void (*cmd_on_align)();
 extern void (*cmd_on_push)();
 extern void (*cmd_on_pop)();
+extern void (*cmd_on_zoom_in_fov)();
+extern void (*cmd_on_zoom_out_fov)();
 extern void (*cmd_on_zoom_in)();
 extern void (*cmd_on_zoom_out)();
 extern void (*cmd_on_shift_left)();

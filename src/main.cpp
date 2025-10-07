@@ -52,8 +52,8 @@ static void on_pop() {
   if (!focusedmonitors.empty())
     focusedmonitors.pop_back();
 }
-// static void on_zoom_in() { glasses.fov *= 0.99; }
-// static void on_zoom_out() { glasses.fov *= 1.01; }
+static void on_zoom_in_fov() { glasses.fov *= 0.95; }
+static void on_zoom_out_fov() { glasses.fov *= 1.05; }
 static void on_zoom_in() { eye_zoom_mult += 0.05; }
 static void on_zoom_out() { eye_zoom_mult -= 0.05; }
 static void on_shift_left() { screen_angle_offset_degrees += angle_deg / 2.0f; }
@@ -301,13 +301,15 @@ int main(int, char **) {
     std::fprintf(stderr, "Failed to setup glasses\n");
     return 1;
   }
-  glasses.fov = 45.0;
+  glasses.fov = 40.0;
   on_align();
 
   // Hook command handlers
   cmd_on_align = on_align;
   cmd_on_push = on_push;
   cmd_on_pop = on_pop;
+  cmd_on_zoom_in_fov = on_zoom_in_fov;
+  cmd_on_zoom_out_fov = on_zoom_out_fov;
   cmd_on_zoom_in = on_zoom_in;
   cmd_on_zoom_out = on_zoom_out;
   cmd_on_shift_left = on_shift_left;
